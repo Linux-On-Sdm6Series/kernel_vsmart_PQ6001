@@ -20,6 +20,9 @@
 #include <linux/mmc/core.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/pm.h>
+#include <linux/mmc/ring_buffer.h>
+
+#define MMC_AUTOSUSPEND_DELAY_MS	20000
 
 struct mmc_ios {
 	unsigned int	clock;			/* clock rate */

@@ -26,6 +26,10 @@
 #include <linux/workqueue.h>
 #include <linux/freezer.h>
 
+#ifdef CONFIG_MSM_PM
+#include "lpm-levels.h"
+#endif
+
 /**
  * struct alarm_base - Alarm timer bases
  * @lock:		Lock for syncrhonized access to the base
@@ -53,6 +57,18 @@ static struct rtc_timer		rtctimer;
 static struct rtc_device	*rtcdev;
 static DEFINE_SPINLOCK(rtcdev_lock);
 
+static void alarmtimer_triggered_func(void *p)
+{
+	struct rtc_device *rtc = rtcdev;
+
+	if (!(rtc->irq_data & RTC_AF))
+		return;
+	__pm_wakeup_event(ws, 2 * MSEC_PER_SEC);
+}
+
+static struct rtc_task alarmtimer_rtc_task = {
+	.func = alarmtimer_triggered_func
+};
 /**
  * alarmtimer_get_rtcdev - Return selected rtcdevice
  *
@@ -271,6 +287,20 @@ static int alarmtimer_suspend(struct device *dev)
 		__pm_wakeup_event(ws, MSEC_PER_SEC);
 	return ret;
 }
+#endif
+static int alarmtimer_resume(struct device *dev)
+{
+	struct rtc_device *rtc;
+
+	rtc = alarmtimer_get_rtcdev();
+	/* If we have no rtcdev, just return */
+	if (!rtc)
+		return 0;
+	rtc_timer_cancel(rtc, &rtctimer);
+
+	return 0;
+}
+
 #else
 static int alarmtimer_suspend(struct device *dev)
 {
@@ -612,14 +642,6 @@ static int alarm_timer_set(struct k_itimer *timr, int flags,
 	/* start the timer */
 	timr->it.alarm.interval = timespec_to_ktime(new_setting->it_interval);
 
-	/*
-	 * Rate limit to the tick as a hot fix to prevent DOS. Will be
-	 * mopped up later.
-	 */
-	if (timr->it.alarm.interval.tv64 &&
-			ktime_to_ns(timr->it.alarm.interval) < TICK_NSEC)
-		timr->it.alarm.interval = ktime_set(0, TICK_NSEC);
-
 	exp = timespec_to_ktime(new_setting->it_value);
 	/* Convert (if necessary) to absolute time */
 	if (flags != TIMER_ABSTIME) {
@@ -795,7 +817,7 @@ static int alarm_timer_nsleep(const clockid_t which_clock, int flags,
 			goto out;
 	}
 
-	restart = &current->restart_block;
+	restart = &current_thread_info()->restart_block;
 	restart->fn = alarm_timer_nsleep_restart;
 	restart->nanosleep.clockid = type;
 	restart->nanosleep.expires = exp.tv64;

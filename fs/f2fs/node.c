@@ -1437,7 +1437,8 @@ static int add_free_nid(struct f2fs_sb_info *sbi, nid_t nid, bool build)
 	struct f2fs_nm_info *nm_i = NM_I(sbi);
 	struct free_nid *i, *e;
 	struct nat_entry *ne;
-	int err = -EINVAL;
+	bool allocated = false;
+	bool ret = false;
 
 	if (!available_free_memory(sbi, FREE_NIDS))
 		return -1;
@@ -1483,8 +1484,19 @@ static int add_free_nid(struct f2fs_sb_info *sbi, nid_t nid, bool build)
 			goto err_out;
 
 		e = __lookup_free_nid_list(nm_i, nid);
-		if (e)
+		if (e) {
+			if (e->state == NID_NEW)
+				ret = true;
 			goto err_out;
+		}
+	}
+	ret = true;
+
+	if (radix_tree_insert(&nm_i->free_nid_root, i->nid, i)) {
+		spin_unlock(&nm_i->free_nid_list_lock);
+		radix_tree_preload_end();
+		kmem_cache_free(free_nid_slab, i);
+		return 0;
 	}
 	if (radix_tree_insert(&nm_i->free_nid_root, i->nid, i))
 		goto err_out;
@@ -1494,10 +1506,7 @@ static int add_free_nid(struct f2fs_sb_info *sbi, nid_t nid, bool build)
 err_out:
 	spin_unlock(&nm_i->free_nid_list_lock);
 	radix_tree_preload_end();
-err:
-	if (err)
-		kmem_cache_free(free_nid_slab, i);
-	return !err;
+	return ret;
 }
 
 static void remove_free_nid(struct f2fs_nm_info *nm_i, nid_t nid)
